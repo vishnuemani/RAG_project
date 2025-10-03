@@ -1,0 +1,7 @@
+flask==3.0.3
+gunicorn==22.0.0
+twilio==9.2.3
+python-dotenv==1.0.1
+werkzeug==3.0.3
+google-generativeai>=0.6.0
+pinecone>=3.0.0

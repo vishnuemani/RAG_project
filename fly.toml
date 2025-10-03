@@ -1,0 +1,27 @@
+# fly.toml app configuration file generated for whatsapp-bot-v4 on 2025-08-25T19:54:23-04:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'whatsapp-bot-v4'
+primary_region = 'bos'
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+[mounts]
+  source="data"
+  destination="/data"
+
