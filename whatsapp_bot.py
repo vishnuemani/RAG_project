@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 import csv
 import datetime as dt
+from collections import deque
 
 # Your RAG pipeline
 from backend import answer_with_full_rag
@@ -41,6 +42,31 @@ NAMESPACE_MAP = {
 DEFAULT_NAMESPACE = os.getenv("DEFAULT_NAMESPACE", "Blood Donation")
 
 CSV_PATH = "/data/message_log.csv"
+
+def fetch_recent_from_csv(wa_id: str, business_phone_id: str, limit: int = 8) -> list[tuple[str, str]]:
+    """
+    Returns [(role, text), ...] oldest->newest for this wa_id+biz_number.
+    CSV columns are: created_at_utc, wa_user_id, business_phone_id,
+                     display_phone_number, namespace, question, answer
+    """
+    path = CSV_PATH
+    if not os.path.exists(path):
+        return []
+
+    window = deque(maxlen=limit * 2)  # keep user+assistant lines
+    with open(path, newline="", encoding="utf-8") as f:
+        r = csv.reader(f)
+        for row in r:
+            if len(row) < 7:
+                continue
+            if row[1] != wa_id or row[2] != business_phone_id:
+                continue
+            q, a = row[5].strip(), row[6].strip()  # question, answer
+            if q:
+                window.append(("user", q))
+            if a:
+                window.append(("assistant", a))
+    return list(window)[-limit:]
 
 
 def log_to_csv(wa_id: str, business_phone_id: str, display_num: str,
@@ -99,8 +125,33 @@ def _process_and_reply(user_text: str, user_wa_id: str,
                        phone_number_id: str, display_phone_number: str | None) -> None:
     """Run RAG and send reply back to the user, using the same business number."""
     namespace = _resolve_namespace(phone_number_id, display_phone_number)
+
+    # Pull a small rolling window of recent context for this user+number
+    history = fetch_recent_from_csv(user_wa_id, phone_number_id, limit=8)
+
+    if history:
+        transcript_lines = []
+        used = 0
+        for role, text in history:
+            # trim long lines so we don't blow up tokens
+            t = text.strip()
+            if len(t) > 400:
+                t = t[:380] + " …"
+            line = f"{'User' if role=='user' else 'Assistant'}: {t}"
+            if used + len(line) > 1500:
+                break
+            transcript_lines.append(line)
+            used += len(line)
+        composed = (
+            "Conversation so far (oldest → newest):\n"
+            + "\n".join(transcript_lines)
+            + "\n\nUser's new message: "
+            + user_text
+        )
+    else:
+        composed = user_text
     try:
-        answer, *_ = answer_with_full_rag(user_text, 5, namespace)
+        answer, *_ = answer_with_full_rag(composed, 5, namespace)
     except Exception:
         app.logger.exception("RAG pipeline error")
         answer = "Sorry, something went wrong. Please try again."
