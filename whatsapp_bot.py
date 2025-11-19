@@ -61,6 +61,18 @@ def log_to_csv(wa_id: str, business_phone_id: str, display_num: str,
         writer.writerow([ts, wa_id, business_phone_id, display_num, namespace, question, answer])
 
 
+def wa_id_seen(wa_id: str) -> bool:
+    """Return True if previous user (wa_id) exists in CSV_PATH under the 'wa_user_id' column."""
+    try:
+        with open(CSV_PATH, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames and "wa_id" in reader.fieldnames:
+                return any((row.get("wa_id") or "") == wa_id for row in reader)
+    except FileNotFoundError:
+        return False
+    return False
+    
+
 def send_whatsapp_text(phone_number_id: str, to_number: str, body: str, timeout: int = 15) -> None:
     """
     Send a text message via WhatsApp Cloud API
@@ -93,8 +105,16 @@ def _process_and_reply(user_text: str, user_wa_id: str,
     """Run RAG and send reply back to the user, using the same business number."""
     
     namespace = DEFAULT_NAMESPACE
+
+    #construct intro for first-time user
+    intro_message = "Hello! I am a chat tool to help answer basic questions about blood donation. I can only see your most recent messages, so please give me appropriate context! \n\n For your question: \n "
+    seen = wa_id_seen(user_wa_id) #check if previous user
+    print("Phone number exists? : ", wa_id_seen(user_wa_id))
+
     try:
         answer, *_ = answer_with_full_rag(user_text, 5, namespace) #get answer
+        if not seen:
+            answer = intro_message + answer #send intro
     except Exception:
         app.logger.exception("RAG pipeline error")
         answer = "Sorry, something went wrong. Please try again."
