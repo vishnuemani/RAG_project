@@ -10,22 +10,25 @@ from dotenv import load_dotenv
 import csv
 import datetime as dt
 
-# Your RAG pipeline
+# import RAG pipeline
 from backend import answer_with_full_rag
 
-# ----- Config / env -----
-load_dotenv()  # no-op on Fly; useful for local runs
+# ----- load Config / env -----
+load_dotenv() 
 
+#set logging in Fly
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
 app = Flask(__name__)
 executor = ThreadPoolExecutor(max_workers=int(os.getenv("WORKERS", "2")))
 
+#Load access tokens for WhatsApp from secrets
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN")
 GRAPH_API_VERSION     = os.getenv("GRAPH_API_VERSION", "v22.0")
 ACK_TEXT              = os.getenv("ACK_TEXT", "⏳ Thinking... I'll reply shortly!")
 
+#Report any missing tokens
 _missing = [n for n, v in [
     ("WHATSAPP_ACCESS_TOKEN", WHATSAPP_ACCESS_TOKEN),
     ("WHATSAPP_VERIFY_TOKEN", WHATSAPP_VERIFY_TOKEN),
@@ -33,19 +36,18 @@ _missing = [n for n, v in [
 if _missing:
     raise RuntimeError(f"Missing environment variables: {', '.join(_missing)}")
 
-# Optional: map a business phone_number_id (or display number digits) to a namespace/bot
-NAMESPACE_MAP = {
-    # "734690309731285": "Blood Donation",  # example: phone_number_id -> namespace
-    # "15551515454": "Pregnancy",           # example: display number digits -> namespace
-}
+#Namespace (choose which document base)
 DEFAULT_NAMESPACE = os.getenv("DEFAULT_NAMESPACE", "Blood Donation")
 
+#Messages log to this file
 CSV_PATH = "/data/message_log.csv"
-
 
 def log_to_csv(wa_id: str, business_phone_id: str, display_num: str,
                namespace: str, question: str, answer: str):
-    """Append each Q&A to a persistent CSV file in the Fly volume."""
+    """Append each Q&A to a persistent CSV file that resides in the Fly volume.
+        The columns are: Time of creation (UTC), WA User ID, Business Phone ID,
+        Display phone mumber (donor's), namespace (which document base), question, answer
+    """
     ts = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
     write_header = not os.path.exists(CSV_PATH)
     os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
@@ -59,16 +61,6 @@ def log_to_csv(wa_id: str, business_phone_id: str, display_num: str,
         writer.writerow([ts, wa_id, business_phone_id, display_num, namespace, question, answer])
 
 
-def _resolve_namespace(phone_number_id: str, display_phone_number: str | None) -> str:
-    if phone_number_id in NAMESPACE_MAP:
-        return NAMESPACE_MAP[phone_number_id]
-    if display_phone_number:
-        digits = "".join(ch for ch in display_phone_number if ch.isdigit())
-        if digits in NAMESPACE_MAP:
-            return NAMESPACE_MAP[digits]
-    return DEFAULT_NAMESPACE
-
-
 def send_whatsapp_text(phone_number_id: str, to_number: str, body: str, timeout: int = 15) -> None:
     """
     Send a text message via WhatsApp Cloud API
@@ -79,33 +71,35 @@ def send_whatsapp_text(phone_number_id: str, to_number: str, body: str, timeout:
         "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
         "Content-Type": "application/json",
     }
+
+    #payload to send back to WhatsApp
     payload = {
         "messaging_product": "whatsapp",
         "to": to_number,  # digits only (no 'whatsapp:' prefix)
         "type": "text",
         "text": {"body": body},
     }
-    r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+    r = requests.post(url, headers=headers, json=payload, timeout=timeout) #send message
     try:
         r.raise_for_status()
         app.logger.info("Sent message via %s → %s; response: %s", phone_number_id, to_number, r.json())
     except requests.HTTPError:
         app.logger.error("WhatsApp send failed (%s): %s", r.status_code, r.text)
-        # You can add a specific check for 131047 here if desired.
         raise
 
 
 def _process_and_reply(user_text: str, user_wa_id: str,
                        phone_number_id: str, display_phone_number: str | None) -> None:
     """Run RAG and send reply back to the user, using the same business number."""
-    namespace = _resolve_namespace(phone_number_id, display_phone_number)
+    
+    namespace = DEFAULT_NAMESPACE
     try:
-        answer, *_ = answer_with_full_rag(user_text, 5, namespace)
+        answer, *_ = answer_with_full_rag(user_text, 5, namespace) #get answer
     except Exception:
         app.logger.exception("RAG pipeline error")
         answer = "Sorry, something went wrong. Please try again."
     try:
-        send_whatsapp_text(phone_number_id, user_wa_id, answer)
+        send_whatsapp_text(phone_number_id, user_wa_id, answer) #send text
     except Exception:
         app.logger.exception("Failed to send WhatsApp reply")
     try:
@@ -113,6 +107,8 @@ def _process_and_reply(user_text: str, user_wa_id: str,
     except Exception:
         app.logger.exception("Failed to log interaction to CSV")
 
+
+#---- APP BUILDING ------ :
 
 # --- Webhook verification (GET) ---
 @app.route("/webhook", methods=["GET"])
@@ -131,6 +127,8 @@ def receive_webhook():
     data = request.get_json(silent=True) or {}
     app.logger.debug("Inbound payload: %s", data)
 
+    #Read all entries from WhatsApp
+
     for entry in data.get("entry", []):
         for change in entry.get("changes", []):
             value = change.get("value", {}) or {}
@@ -143,24 +141,25 @@ def receive_webhook():
             business_phone_id = meta.get("phone_number_id")
             display_number     = meta.get("display_phone_number")
 
+            #Get messages and sender WhatsApp number
             msg   = messages[0]
             wa_id = msg.get("from")  # user's WhatsApp number (digits)
             text  = (msg.get("text") or {}).get("body")
 
             if business_phone_id and wa_id and text:
-                # 1) Immediate ack from the same business number
+                # 1) Immediate response to user saying THINKING from the same business number
                 try:
                     send_whatsapp_text(business_phone_id, wa_id, ACK_TEXT, timeout=5)
                 except Exception:
                     app.logger.exception("Failed to send ack")
 
-                # 2) Heavy work in background (keep routing info)
+                # 2) Final answer
                 executor.submit(_process_and_reply, text, wa_id, business_phone_id, display_number)
 
     return "EVENT_RECEIVED", 200
 
 
-# Local dev only; use Gunicorn in containers
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
     app.run(host="0.0.0.0", port=port, debug=os.getenv("FLASK_DEBUG", "false").lower() == "true")
