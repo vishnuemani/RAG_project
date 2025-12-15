@@ -148,7 +148,7 @@ def answer_with_full_rag(
         return "Sorry, I don't have enough information to answer your question. I can only see the most recent message, not the messsage history.", []
 
     context = "\n\n".join(t for t, _ in filtered)
-
+    
 
         # 4. first pass summary
     summary_prompt = (
