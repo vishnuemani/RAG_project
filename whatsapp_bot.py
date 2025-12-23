@@ -126,17 +126,19 @@ def _process_and_reply(user_text: str, user_wa_id: str,
     #construct intro for first-time user
     intro_message = "Hello! I am a chat tool to help answer basic questions about blood donation. I can only see your most recent messages, so please give me appropriate context! \n\n For your question: \n "
     seen = wa_id_seen(user_wa_id) #check if previous user
-    print("Phone number exists? : ", wa_id_seen(user_wa_id))
+    #print("Phone number exists? : ", wa_id_seen(user_wa_id))
+    print("DEBUGG Q:", user_text)
 
     # obtain the QA history from the user
     memory = get_qa_memory(user_wa_id)
-    user_input = user_text + " For your convenience, here are some past conversations that were had with the current user: "
+    mem_input = ""
     for qa_str in memory:
-        user_input += (qa_str + ", ")
-    user_input = user_input[:-2]
+        print(qa_str)
+        mem_input += (qa_str + "\n\n")
+    mem_input = mem_input[:-2]
 
     try: 
-        answer, *_ = answer_with_full_rag(user_input, 5, namespace) #get answer with past conversation
+        answer, *_ = answer_with_full_rag(user_text, mem_input, 5, namespace) #get answer with past conversation
         if not seen:
             answer = intro_message + answer #send intro
     except Exception:

@@ -115,6 +115,7 @@ def retrieve_chunks(query: str, k: int = TOP_K, namespace: Optional[str] = None)
 
 def answer_with_full_rag(
     question: str,
+    mem: str,
     k: int = TOP_K,
     namespace: Optional[str] = None
 ) -> Tuple[str, List[Tuple[str, float]]]:
@@ -130,6 +131,8 @@ def answer_with_full_rag(
          - Formatting pass (final donor-facing wording, add greetings).
 
     """
+
+    print(mem)
 
     model = genai.GenerativeModel("models/gemini-2.5-flash-lite")
 
