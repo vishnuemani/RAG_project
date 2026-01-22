@@ -127,8 +127,24 @@ def answer_with_full_rag(
          - Second pass: Format and translate to question's original language (final donor-facing wording, add greetings, translate to user language).
     """
 
-    model = genai.GenerativeModel("models/gemini-3-flash-preview") # Previously was gemini-2.5-flash-lite
+    model = genai.GenerativeModel("models/gemini-2.5-flash") # Previously was gemini-2.5-flash-lite
     translated_question = question #model.generate_content(translation_prompt).text.strip()
+
+
+
+
+  # First pass: summarize relevant context
+    context_summarization_prompt = (
+        "The following is a message history followed by the most recent question. \n"
+        f"Context: {mem}\n\n"
+        f"New question: {question}"
+        "If the new question is dependent on information from the previous statements, rewrite the question so it is clear and can be sent to an answering agent.\n\n"
+        "summarized question with detailed context:"
+    )
+    context_summary = model.generate_content(context_summarization_prompt).text.strip()
+
+    #print("CONTTXT",context_summary)
+
 
     # Retrieve chunks from Pinecone
     chunks = retrieve_chunks(question, k, namespace)
@@ -143,43 +159,32 @@ def answer_with_full_rag(
 
     context = "\n\n".join(t for t, _ in filtered)
     
-    # First pass: summarize relevant context
-    context_summarization_prompt = (
-        "You are a safe and verified conversational assistant in a blood donor chat pipeline.\n"
-        f"Context:\n{context}\nQuestion: {translated_question}\n\n"
-        "No references to the agent, just a clear and concise donor facing response. Minimize wordiness.\n"
-        "Try to provide a detailed, formatted summary for the given context that is relevant to the question.\n\n"
-        "Formatted and summarized context:"
-    )
-    context_summary = model.generate_content(context_summarization_prompt).text.strip()
-
+    #print("CONTEXTTT",context)
 
     # Second pass: obtain first chatbot answer + check validity of user query + ensure response is safe
     verify_prompt = (
         "You are a safe and verified conversational assistant in a blood donor chat pipeline.\n"
-        f"Context:\n{context_summary}\nQuestion: {translated_question}\n\n"
+        f"Context:\n{context}\nQuestion: {context_summary}\n\n"
         "Try to respond to the question using ONLY the above context, or say 'Not enough information'. \n"
         "Conversation Guidelines: Write for a blood donor. Use very straightforward, plain language suitable for an uneducated audience, unless the patient asks for a more technical answer. If it's a conversational comment or greeting, respond naturally. " 
-        "\nIMPORTANT: you don't have the message history, but the user might not know this. If the query is not entirely a clear, standalone question about blood donation that you fully understand, (such as queries like 'I need help' or 'What does this mean?' or 'more information' or gibberish like 'Fidjfks'), respond that you don't understand AND that can only can see the most recent query and not the whole message history. \n\n"
-        "Self-Verification: If the input explicitly signals insufficient info or a clarification request, output verbatim 'Not enough information' and DO NOT write anything more.\n"
+
+        "Self-Verification: "
         "If the draft answer is not relevant to the question, output 'Not enough information'. DO NOT overextend yourself to report an answer if the draft does not clearly address the query. This is important. \n"
         "If the draft answer DOES address the query, make minor edits to the draft answer to ensure that the answer is fully supported from the context alone; prefer straightforward wording for an uneducated audience, unless the query indicates the person is knowledgeable, in which case technical terms are acceptable. \n\n"
-        "Safety Guidelines: If you see 'Not enough information' or an explicit clarification request, output 'Not enough information' verbatim and DO NOT GENERATE ANYTHING ELSE.\n"
-        "Otherwise, make small adjustments to the draft by moderating absolutes and using reasonably cautious language. \n"
-        "Keep wording straightforward for an uneducated audience \n\n"
         "Self-verified and safety-checked answer (be brief):"
     )
     verified_summary = model.generate_content(verify_prompt).text.strip()
 
+    print(verified_summary)
 
     # Third pass: format model response + translate
     formatting_prompt = (
         "You are a formatting and language consistency assistant for a blood donor chatbot. \n"
-        f"User's question: {question} \n"
+        f"User's question: {context_summary} \n"
         f"Previous answer: {verified_summary}\n"
         "Formatting Guidelines: Take the previous answer and convert it into exactly what the blood donor should read, no internal notes,\n"
-        "No references to the agent, just a clear and concise donor facing response. Minimize wordiness.\n"
-        "Use very straightforward language for an uneducated audience; for ALL technical terms that a villager might not understand, add parentheses with a few-word explanation / synonym. \n"
+        "No references to the agent, just a clear and concise donor facing response.\n"
+        "Use straightforward language for an uneducated audience; for niche, technical medical terms that a commoner might not understand, add parentheses with a few-word explanation / synonym. \n"
         f"Finally, look back at the question, and add any greetings/niceties such as 'Hello'/'Thank You'/'Good Afternoon/etc. If the user is JUST greeting you, thanking you etc., be sure to respond with the relevant greeting (e.g. Hello, you're welcome, etc.), even if the previous bot's answer says Not Enough Information." 
         "\nIf it is just an introductory greeting exchange like hi or hello, mention that you are a tool that can answer any general questions about blood donation, and that you can only see their most recent question, not the whole chat.  \n"
         "Translation Guidelines:"
