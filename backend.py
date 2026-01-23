@@ -7,6 +7,7 @@ from typing import List, Tuple, Optional
 from pinecone import Pinecone
 from pinecone.exceptions import PineconeException
 import google.generativeai as genai
+import time
 
 
 # ----- APIs -----
@@ -127,12 +128,12 @@ def answer_with_full_rag(
          - Second pass: Format and translate to question's original language (final donor-facing wording, add greetings, translate to user language).
     """
 
-    model = genai.GenerativeModel("models/gemini-2.5-flash") # Previously was gemini-2.5-flash-lite
-    translated_question = question #model.generate_content(translation_prompt).text.strip()
+    high_model = genai.GenerativeModel("models/gemini-3-flash-preview") # Previously was gemini-2.5-flash-lite
+    low_model = genai.GenerativeModel("models/gemini-2.5-flash-lite") # Previously was gemini-2.5-flash-lite
 
 
 
-
+    start = time.perf_counter()
   # First pass: summarize relevant context
     context_summarization_prompt = (
         "The following is a message history followed by the most recent question. \n"
@@ -141,9 +142,14 @@ def answer_with_full_rag(
         "If the new question is dependent on information from the previous statements, rewrite the question so it is clear and can be sent to an answering agent.\n\n"
         "summarized question with detailed context:"
     )
-    context_summary = model.generate_content(context_summarization_prompt).text.strip()
+    context_summary = high_model.generate_content(context_summarization_prompt).text.strip()
+
+    elapsed_s = time.perf_counter() - start
+    print(f"Elapsed: {elapsed_s:.6f} seconds")
 
     #print("CONTTXT",context_summary)
+
+    start = time.perf_counter()
 
 
     # Retrieve chunks from Pinecone
@@ -158,24 +164,34 @@ def answer_with_full_rag(
         return "Sorry, I don't have enough information to answer your question. I can only see the most recent message, not the messsage history.", []
 
     context = "\n\n".join(t for t, _ in filtered)
+
+    elapsed_s = time.perf_counter() - start
+    print(f"Elapsed: {elapsed_s:.6f} seconds")
     
     #print("CONTEXTTT",context)
+
+    start = time.perf_counter()
 
     # Second pass: obtain first chatbot answer + check validity of user query + ensure response is safe
     verify_prompt = (
         "You are a safe and verified conversational assistant in a blood donor chat pipeline.\n"
         f"Context:\n{context}\nQuestion: {context_summary}\n\n"
         "Try to respond to the question using ONLY the above context, or say 'Not enough information'. \n"
-        "Conversation Guidelines: Write for a blood donor. Use very straightforward, plain language suitable for an uneducated audience, unless the patient asks for a more technical answer. If it's a conversational comment or greeting, respond naturally. " 
+        "Conversation Guidelines: Write for a blood donor. Use very straightforward, plain language suitable for an uneducated audience. " 
 
         "Self-Verification: "
-        "If the draft answer is not relevant to the question, output 'Not enough information'. DO NOT overextend yourself to report an answer if the draft does not clearly address the query. This is important. \n"
-        "If the draft answer DOES address the query, make minor edits to the draft answer to ensure that the answer is fully supported from the context alone; prefer straightforward wording for an uneducated audience, unless the query indicates the person is knowledgeable, in which case technical terms are acceptable. \n\n"
+        "If the draft answer is not relevant to the question, output 'Not enough information'. DO NOT overextend yourself to report an answer if it does not clearly address the query. This is important. \n"
+        "If the draft answer DOES address the query, make any small edits to ensure that the answer is fully supported from the context alone \n\n"
         "Self-verified and safety-checked answer (be brief):"
     )
-    verified_summary = model.generate_content(verify_prompt).text.strip()
+    verified_summary = high_model.generate_content(verify_prompt).text.strip()
 
-    print(verified_summary)
+    elapsed_s = time.perf_counter() - start
+    print(f"Elapsed: {elapsed_s:.6f} seconds")
+
+    #print(verified_summary)
+
+    start = time.perf_counter()
 
     # Third pass: format model response + translate
     formatting_prompt = (
@@ -187,13 +203,11 @@ def answer_with_full_rag(
         "Use straightforward language for an uneducated audience; for niche, technical medical terms that a commoner might not understand, add parentheses with a few-word explanation / synonym. \n"
         f"Finally, look back at the question, and add any greetings/niceties such as 'Hello'/'Thank You'/'Good Afternoon/etc. If the user is JUST greeting you, thanking you etc., be sure to respond with the relevant greeting (e.g. Hello, you're welcome, etc.), even if the previous bot's answer says Not Enough Information." 
         "\nIf it is just an introductory greeting exchange like hi or hello, mention that you are a tool that can answer any general questions about blood donation, and that you can only see their most recent question, not the whole chat.  \n"
-        "Translation Guidelines:"
-        "Make sure the user's question is in the SAME language as our answer. \n"
-        f"(Silently) figure out what language the bulk of this question (NOT just the greeting or a select few words) is most likely in: {question}. If it is in multiple langauges, take the most predominant language in the bulk of the question. It is most likely English. \n"
-        f"Only if it is NOT English, translate my English answer back to the other language you identified. Make sure that your final answer is in the SAME LANGUAGE as the initial question, but exactly the same information. \n\n My English answer:\n{verified_summary}\n\nWhat is the answer for the patient? ONLY output the pure, patient-facing answer, no other words or extraneous output (such as anything about translation)."    
-        "\nFormatted and translated answer (be brief):"
+        "Formatted and translated answer (be brief):"
     )
-    final_answer = model.generate_content(formatting_prompt).text.strip()
+    final_answer = low_model.generate_content(formatting_prompt).text.strip()
+    elapsed_s = time.perf_counter() - start
+    print(f"Elapsed: {elapsed_s:.6f} seconds")
 
 
     # Return the final answer plus the list of (chunk, score) pairs
