@@ -128,7 +128,7 @@ def answer_with_full_rag(
          - Second pass: Format and translate to question's original language (final donor-facing wording, add greetings, translate to user language).
     """
 
-    high_model = genai.GenerativeModel("models/gemini-3-flash-preview") # Previously was gemini-2.5-flash-lite
+    high_model = genai.GenerativeModel("models/gemini-2.5-flash") # Previously was gemini-2.5-flash-lite
     low_model = genai.GenerativeModel("models/gemini-2.5-flash-lite") # Previously was gemini-2.5-flash-lite
 
 
@@ -174,15 +174,15 @@ def answer_with_full_rag(
 
     # Second pass: obtain first chatbot answer + check validity of user query + ensure response is safe
     verify_prompt = (
-        "You are a safe and verified conversational assistant in a blood donor chat pipeline.\n"
+        "You are a safe summary assistant for a blood donation chatbot pipeline.\n"
         f"Context:\n{context}\nQuestion: {context_summary}\n\n"
-        "Try to respond to the question using ONLY the above context, or say 'Not enough information'. \n"
-        "Conversation Guidelines: Write for a blood donor. Use very straightforward, plain language suitable for an uneducated audience. " 
+        "Respond to the question by drawing STRICTLY from the above context. If the answer cannot be found in the context, say 'Not enough information'. \n"
+        "Write for a blood donor. Use straightforward language suitable for an uneducated audience. " 
 
-        "Self-Verification: "
-        "If the draft answer is not relevant to the question, output 'Not enough information'. DO NOT overextend yourself to report an answer if it does not clearly address the query. This is important. \n"
-        "If the draft answer DOES address the query, make any small edits to ensure that the answer is fully supported from the context alone \n\n"
-        "Self-verified and safety-checked answer (be brief):"
+        #"Self-Verification: "
+        #"If the draft answer is not relevant to the question, output 'Not enough information'. DO NOT overextend yourself to report an answer if it does not clearly address the query. This is important. \n"
+        #"If the draft answer DOES address the query, make any small edits to ensure that the answer is fully supported from the context alone \n\n"
+        "Verified answer (be brief):"
     )
     verified_summary = high_model.generate_content(verify_prompt).text.strip()
 
